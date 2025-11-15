@@ -1,0 +1,85 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: demo-sqlite-pvc
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-sqlite
+spec:
+  replicas: 1   # SQLite: nur EIN Writer -> bei 1 Replica bleiben
+  selector:
+    matchLabels:
+      app: demo-sqlite
+  template:
+    metadata:
+      labels:
+        app: demo-sqlite
+    spec:
+      # OpenShift: Random UID; mit fsGroup:0 bekommen wir Gruppenrechte auf /data
+      securityContext:
+        fsGroup: 0
+      containers:
+        - name: app
+          image: image-registry.openshift-image-registry.svc:5000/demo-sqlite/demo-sqlite-image:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SQLITE_PATH
+              value: /data/app.db
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: "/", port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: "/", port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: demo-sqlite-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-sqlite-svc
+spec:
+  selector:
+    app: demo-sqlite
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: demo-sqlite
+spec:
+  to:
+    kind: Service
+    name: demo-sqlite-svc
+  port:
+    targetPort: http
+  tls:
+    termination: edge
